@@ -1,0 +1,28 @@
+on late-fs
+    # qcom-hv-haptics calibration/control nodes used by Xiaomi's HAL.
+    chown root input /sys/class/qcom-haptics/lra_calibration
+    chmod 0660 /sys/class/qcom-haptics/lra_calibration
+    chown root input /sys/class/qcom-haptics/lra_impedance
+    chmod 0660 /sys/class/qcom-haptics/lra_impedance
+    chown root input /sys/class/qcom-haptics/lra_frequency_hz
+    chmod 0660 /sys/class/qcom-haptics/lra_frequency_hz
+    chown root input /dev/qcom_haptic
+    chmod 0660 /dev/qcom_haptic
+    mkdir /mnt/vendor/persist/haptics 0755 root root
+
+# Keep the recovery HAL executable in the ramdisk system tree. The stock HAL
+# dlopens /odm/lib64/libaachaptics.so by an absolute path, so its ramdisk copy
+# remains there and the service starts when twrp.modules.loaded confirms that
+# TWRP has finished with its temporary logical ODM mount.
+service odm.vibratorfeature-service /system/bin/hw/vendor.xiaomi.hardware.vibratorfeature.service
+    class hal
+    disabled
+    user root
+    group root input audio
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.vibrator.IVibrator/vibratorfeature
+    setenv LD_LIBRARY_PATH /system/lib64:/vendor/lib64:/vendor/lib64/hw:/odm/lib64:/sbin
+    # Stock Android 15 HALs otherwise bind to recovery's incompatible Android
+    # 14 libbinder_ndk/libbase/libc++ and fail before registering the service.
+    # Keep the HAL's permanent hapticDump handle on recovery tmpfs, not /data.
+    setenv LD_PRELOAD /system/lib64/libbixi_haptic_log_redirect.so:/system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so

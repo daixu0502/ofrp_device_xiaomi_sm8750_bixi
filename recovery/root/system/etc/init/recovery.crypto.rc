@@ -1,0 +1,78 @@
+# Recovery wrappers for bixi's stock Android 15 vendor security stack.
+# All services run in the permissive recovery domain and use matching SDK 35
+# compatibility libraries instead of binding to Android 14 recovery ABIs.
+
+service vendor.qseecomd /vendor/bin/qseecomd
+    class core
+    disabled
+    user root
+    group root drmrpc
+    socket notify-topology stream 660 system drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /vendor/lib64/libcxx-bixi-sdk35.so
+
+# Qualcomm's GP trusted-app loader. In particular, this loads bixi's gpqese TA
+# (UUID 32552B22-89FE-42B4-8A45-A0C4E2DB0326) from modem firmware for Weaver.
+service vendor.ssgtzd /vendor/bin/ssgtzd
+    class late_start
+    disabled
+    user root
+    group root system drmrpc oem_2912 wakelock
+    capabilities WAKE_ALARM BLOCK_SUSPEND
+    socket ssgtzd stream 0660 system oem_2912
+    socket ssgtzd_opener stream 0660 system system
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /vendor/lib64/libcxx-bixi-sdk35.so
+
+service vendor.gatekeeper_default /vendor/bin/hw/android.hardware.gatekeeper-service-qti
+    class early_hal
+    disabled
+    user root
+    group root drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so
+
+service vendor.secure_element /vendor/bin/hw/android.hardware.secure_element-service.qti
+    class hal
+    disabled
+    user root
+    group root nfc drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so:/vendor/lib64/libcrypto-bixi-sdk35.so
+
+service vendor.weaver_nxp /system/bin/linker64 /system/odm/bin/hw/android.hardware.weaver-service.nxp-qti
+    class hal
+    disabled
+    user root
+    group root drmrpc
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.weaver.IWeaver/default
+    # TWRP mounts the installed ROM's ODM at /odm. Keep the recovery Weaver
+    # executable and ese_weaver.so reachable through the persistent ramdisk
+    # path instead of the mount point that gets covered. Invoke the binary via
+    # linker64 because PRODUCT_COPY_FILES installs this nested ODM ELF as 0644.
+    setenv LD_LIBRARY_PATH /system/odm/lib64:/vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so
+
+service vendor.keymint-qti /vendor/bin/hw/android.hardware.security.keymint-service-qti
+    class early_hal
+    disabled
+    user root
+    group root drmrpc
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/odm/lib64:/system/lib64:/sbin
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so:/vendor/lib64/libcrypto-bixi-sdk35.so
+
+# This asynchronous coordinator prevents lazy AIDL starts from racing modem
+# firmware, ssgtzd and nxp-nci during TWRP's first metadata decrypt attempt.
+service bixi.crypto-init /system/bin/sh /system/bin/bixi-crypto-init.sh
+    class core
+    disabled
+    oneshot
+    user root
+    group root system nfc drmrpc
+    seclabel u:r:recovery:s0

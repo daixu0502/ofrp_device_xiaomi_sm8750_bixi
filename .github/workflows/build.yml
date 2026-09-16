@@ -1,319 +1,177 @@
-name: Build OrangeFox 14.1 for bixi
+name: OrangeFox - 构建
+
 
 on:
   workflow_dispatch:
     inputs:
-      device_tree_repository:
-        description: Device tree Git repository URL
+      MANIFEST_BRANCH:
+        description: 'OrangeFox 版本'
         required: true
-        type: string
-        default: https://github.com/daixu0502/ofrp_device_xiaomi_sm8750_bixi
-      device_tree_branch:
-        description: Device tree branch or tag
+        default: '14.1'
+        type: choice
+        options:
+        - 14.1
+        - 12.1
+        - 11.0
+        - 10.0
+      DEVICE_TREE:
+        description: 'OrangeFox设备树'
         required: true
-        type: string
-        default: ofrp-14.1
-      device_vendor:
-        description: Device vendor directory under device/
+        default: 'https://github.com/daixu0502/ofrp_device_xiaomi_sm8750_bixi'
+      DEVICE_TREE_BRANCH:
+        description: 'OrangeFox设备树分支'
         required: true
-        type: string
-        default: xiaomi
-      device_codename:
-        description: Device codename and device-tree directory name
+        default: 'ofrp-14.1'
+      DEVICE_PATH:
+        description: '指定设备路径'
         required: true
-        type: string
-        default: bixi
-      lunch_combo:
-        description: Android lunch product-release-variant
+        default: 'device/xiaomi/bixi'
+      DEVICE_NAME:
+        description: '指定设备代号'
         required: true
-        type: string
-        default: twrp_bixi-ap2a-eng
-      build_target:
-        description: Image target passed to mka together with adbd
+        default: 'bixi'
+      BUILD_TARGET:
+        description: '构建目标'
         required: true
-        type: string
-        default: recoveryimage
-      recovery_partition_size:
-        description: Maximum image size in bytes; use 0 to disable the check
-        required: true
-        type: string
-        default: "104857600"
+        default: 'recovery'
+        type: choice
+        options:
+        - recovery
+        - boot
       source_fix_script:
-        description: Script inside the device tree to apply after syncing; leave empty to skip
+        description: '源码修复脚本（留空则不运行）'
         required: false
+        default: 'patches/apply-orangefox14-source-fixes.sh'
         type: string
-        default: patches/apply-orangefox14-source-fixes.sh
-      create_release:
-        description: Publish the successful build as a GitHub release
+      DN:
+        description: '设备名称'
         required: true
-        type: boolean
-        default: true
-
-concurrency:
-  group: orangefox-${{ inputs.device_codename }}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: write
-
-env:
-  DEVICE_TREE_REPOSITORY: ${{ inputs.device_tree_repository }}
-  DEVICE_TREE_BRANCH: ${{ inputs.device_tree_branch }}
-  DEVICE_VENDOR: ${{ inputs.device_vendor }}
-  DEVICE: ${{ inputs.device_codename }}
-  DEVICE_PATH: device/${{ inputs.device_vendor }}/${{ inputs.device_codename }}
-  FOX_SYNC_REPOSITORY: https://gitlab.com/OrangeFox/sync.git
-  FOX_SYNC_BRANCH: master
-  FOX_MANIFEST_BRANCH: "14.1"
-  LUNCH_COMBO: ${{ inputs.lunch_combo }}
-  BUILD_TARGET: ${{ inputs.build_target }}
-  OUT_DIR: out/target/product/${{ inputs.device_codename }}
-  RECOVERY_PARTITION_SIZE: ${{ inputs.recovery_partition_size }}
-  SOURCE_FIX_SCRIPT: ${{ inputs.source_fix_script }}
-  TZ: Asia/Shanghai
+        default: '小米MIX Flip 2'
+        type: string
 
 jobs:
   build:
-    name: OrangeFox ${{ inputs.device_codename }}
+    name: 🏠 由 ${{ github.actor }} 构建REC
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
-
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 2048
-          swap-size-mb: 8192
-          remove-dotnet: "true"
-          remove-android: "true"
-          remove-haskell: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
+    - name: 🧱 构建配置
+      run: |
+        echo "构建配置"
+        echo "设备代号: ${{ inputs.DEVICE_NAME }}"
+        echo "设备名称: ${{ inputs.DN }}"
+        echo "OrangeFox版本: ${{ inputs.MANIFEST_BRANCH }}"
+        echo "指定设备路径: ${{ inputs.DEVICE_PATH }}"
+        echo "构建: ${{ inputs.BUILD_TARGET }}"
+    - name: ✅ 检查
+      uses: actions/checkout@v4
+              
+    - name: 🧹 清理
+      uses: rokibhasansagar/slimhub_actions@main
 
-      - name: Install build tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            bc \
-            bison \
-            build-essential \
-            ccache \
-            curl \
-            flex \
-            g++-multilib \
-            gcc-multilib \
-            git \
-            git-lfs \
-            gnupg \
-            gperf \
-            imagemagick \
-            lib32ncurses-dev \
-            lib32readline-dev \
-            lib32z1-dev \
-            libelf-dev \
-            liblz4-tool \
-            libncurses-dev \
-            libsdl1.2-dev \
-            libssl-dev \
-            libxml2 \
-            libxml2-utils \
-            lzop \
-            pngcrush \
-            repo \
-            rsync \
-            schedtool \
-            squashfs-tools \
-            xsltproc \
-            zip \
-            zlib1g-dev
-          git lfs install
-          git config --global user.name "${GITHUB_ACTOR}"
-          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-          git config --global color.ui false
+    - name: 🚢 Swap空间
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 24
+      
+    - name: 🤖 构建环境
+      run: |
+        sudo apt install aria2 -y
+        git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+        cd scripts
+        sudo bash setup/android_build_env.sh
+      
+    - name: 🏙️ 初始化清单
+      if: inputs.MANIFEST_BRANCH == '11.0' || inputs.MANIFEST_BRANCH == '12.1' || inputs.MANIFEST_BRANCH == '14.1'
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
+        cd ${GITHUB_WORKSPACE}/OrangeFox
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+        git clone https://gitlab.com/OrangeFox/sync.git -b master
+        cd sync
+        ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
 
-      - name: Configure ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: orangefox-14.1-${{ inputs.device_codename }}-${{ runner.os }}
-          max-size: 5G
-          create-symlink: true
+    - name: 🌳 克隆设备树
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        git clone ${{ inputs.DEVICE_TREE }} -b ${{ inputs.DEVICE_TREE_BRANCH }} ./${{ inputs.DEVICE_PATH }}
+        cd ${{ inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
-      - name: Fetch OrangeFox sync tools
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git clone --depth=1 --branch "${FOX_SYNC_BRANCH}" \
-            "${FOX_SYNC_REPOSITORY}" "${RUNNER_TEMP}/orangefox-sync"
-          test -f "${RUNNER_TEMP}/orangefox-sync/patches/patch-manifest-fox_14.1.diff"
-          test -f "${RUNNER_TEMP}/orangefox-sync/patches/patch-vold-fox_14.1.diff"
-          test -f "${RUNNER_TEMP}/orangefox-sync/patches/patch-remove-minimal-fox_14.1.diff"
-          test -f "${RUNNER_TEMP}/orangefox-sync/patches/patch-update-engine-fox_14.1.diff"
+    - name: 🦊 构建OrangeFox
+      env:
+        DEVICE_PATH: ${{ inputs.DEVICE_PATH }}
+        SOURCE_FIX_SCRIPT: ${{ inputs.source_fix_script }}
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        set +e
+        source build/envsetup.sh
+        set -e
+        if [ -n "$SOURCE_FIX_SCRIPT" ]; then
+          bash "$DEVICE_PATH/$SOURCE_FIX_SCRIPT" "$PWD"
+        else
+          echo "未传入 source_fix_script，跳过源码修复脚本"
+        fi
+        export ALLOW_MISSING_DEPENDENCIES=true
+        lunch twrp_${{ inputs.DEVICE_NAME }}-eng && mka ${{ inputs.BUILD_TARGET }}image
 
-      - name: Sync OrangeFox 14.1 sources
-        shell: bash
-        run: |
-          set -euxo pipefail
-          (
-            cd "${RUNNER_TEMP}/orangefox-sync"
-            ./orangefox_sync.sh \
-              --branch "${FOX_MANIFEST_BRANCH}" \
-              --path "${GITHUB_WORKSPACE}"
-          )
-          test -d "${GITHUB_WORKSPACE}/.repo"
-          test -d "${GITHUB_WORKSPACE}/bootable/recovery"
-          test -d "${GITHUB_WORKSPACE}/vendor/recovery"
-          cd "${GITHUB_WORKSPACE}"
-          repo status >/dev/null
+    - name: 💿 整理镜像
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/upload_artifacts
 
-      - name: Checkout device tree
-        shell: bash
-        run: |
-          set -euxo pipefail
-          [[ "${DEVICE_VENDOR}" =~ ^[A-Za-z0-9._-]+$ ]]
-          [[ "${DEVICE}" =~ ^[A-Za-z0-9._-]+$ ]]
-          [[ "${RECOVERY_PARTITION_SIZE}" =~ ^[0-9]+$ ]]
-          test ! -e "${DEVICE_PATH}"
-          mkdir -p "$(dirname "${DEVICE_PATH}")"
-          git clone --branch "${DEVICE_TREE_BRANCH}" \
-            "${DEVICE_TREE_REPOSITORY}" "${DEVICE_PATH}"
-          git -C "${DEVICE_PATH}" lfs pull
-          git -C "${DEVICE_PATH}" submodule update --init --recursive
+        FOX_DIR="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}"
+        OUT_DIR="${FOX_DIR}/out/target/product/${{ inputs.DEVICE_NAME }}"
 
-      - name: Apply device OrangeFox source fixes
-        shell: bash
-        run: |
-          set -euxo pipefail
-          if [[ -n "${SOURCE_FIX_SCRIPT}" ]]; then
-            fix_script="${DEVICE_PATH}/${SOURCE_FIX_SCRIPT}"
-            test -f "${fix_script}"
-            bash "${fix_script}" "${GITHUB_WORKSPACE}"
-          fi
+        echo "🔍 正在从以下绝对路径搜寻文件："
+        echo "$OUT_DIR"
 
-      - name: Record build information
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          {
-            echo "OrangeFox Recovery Project"
-            echo "Device: ${DEVICE_VENDOR}/${DEVICE}"
-            echo "Lunch combo: ${LUNCH_COMBO}"
-            echo "Build target: ${BUILD_TARGET}"
-            echo "OrangeFox sync branch: ${FOX_MANIFEST_BRANCH}"
-            echo "Device tree repository: ${DEVICE_TREE_REPOSITORY}"
-            echo "Device tree ref: ${DEVICE_TREE_BRANCH}"
-            echo "Device tree commit: $(git -C "${DEVICE_PATH}" rev-parse HEAD)"
-            echo "Workflow run: ${GITHUB_RUN_ID}"
-            echo "Build time: $(date --iso-8601=seconds)"
-            echo
-            echo "Recent device-tree changes:"
-            git -C "${DEVICE_PATH}" log -20 \
-              --pretty=format:'- %h %an: %s'
-            echo
-          } | tee artifacts/BUILD_INFO.txt
-
-      - name: Build OrangeFox recovery
-        shell: bash
-        run: |
-          set -euo pipefail
-          export FOX_BUILD_DEVICE="${DEVICE}"
-          source build/envsetup.sh
-
-          export USE_CCACHE=1
-          export CCACHE_EXEC="$(command -v ccache)"
-          export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
-          ccache --max-size=5G
-
-          lunch "${LUNCH_COMBO}"
-          test "${TARGET_DEVICE}" = "${DEVICE}"
-
-          monitor_resources() {
-            while true; do
-              echo "[$(date +%T)] OrangeFox build is running"
-              free -h
-              df -h "${GITHUB_WORKSPACE}"
-              sleep 60
-            done
-          }
-          monitor_resources &
-          monitor_pid=$!
-          trap 'kill "${monitor_pid}" 2>/dev/null || true' EXIT
-
-          mka adbd "${BUILD_TARGET}" 2>&1 | tee build.log
-
-      - name: Collect and verify artifacts
-        id: artifacts
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mapfile -t fox_images < <(
-            find "${OUT_DIR}" -maxdepth 1 -type f \
-              -name "OrangeFox-*-${DEVICE}.img" -printf '%T@ %p\n' \
-              | sort -nr | cut -d' ' -f2-
-          )
-          if [ "${#fox_images[@]}" -eq 0 ]; then
-            echo "OrangeFox image was not produced" >&2
+        if [ ! -d "$OUT_DIR" ]; then
+            echo "❌ 严重错误：输出目录不存在！"
+            echo "可能是 inputs.DEVICE_NAME (${{ inputs.DEVICE_NAME }}) 不对，或者 Manifest 分支不对。"
             exit 1
-          fi
+        fi
 
-          image="${fox_images[0]}"
-          image_size="$(stat -c '%s' "${image}")"
-          if [ "${RECOVERY_PARTITION_SIZE}" -gt 0 ] && \
-             [ "${image_size}" -gt "${RECOVERY_PARTITION_SIZE}" ]; then
-            echo "Image is larger than the recovery partition: ${image_size}" >&2
-            exit 1
-          fi
+        find "$OUT_DIR" -maxdepth 1 -name "OrangeFox*.img" -exec cp {} ${GITHUB_WORKSPACE}/upload_artifacts/ \;
+        find "$OUT_DIR" -maxdepth 1 -name "OrangeFox*.zip" -exec cp {} ${GITHUB_WORKSPACE}/upload_artifacts/ \;
 
-          cp -f "${image}" artifacts/
-          if compgen -G "${OUT_DIR}/OrangeFox-*-${DEVICE}.zip" >/dev/null; then
-            cp -f "${OUT_DIR}"/OrangeFox-*-${DEVICE}.zip artifacts/
-          fi
-          cp -f build.log artifacts/
+        if [ -z "$(ls -A ${GITHUB_WORKSPACE}/upload_artifacts/)" ]; then
+           echo "❌ 未寻找到镜像，请检查BoardConfig.mk或设备树配置"
+           exit 1
+        else
+           echo "✅ 找到文件"
+           ls -R ${GITHUB_WORKSPACE}/upload_artifacts/
+        fi
 
-          (
-            cd artifacts
-            find . -maxdepth 1 -type f \
-              \( -name "OrangeFox-*-${DEVICE}.img" -o -name "OrangeFox-*-${DEVICE}.zip" \) \
-              -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-          )
+    - name: 🧶 设置发行版参数
+      run: |
+        echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> $GITHUB_ENV
+        
+        DEVICE_TREE_URL="${{ inputs.DEVICE_TREE }}"
+        if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
+          DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
+        fi
+        echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> $GITHUB_ENV
 
-          image_name="$(basename "${image}")"
-          release_tag="orangefox-${DEVICE}-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
-          echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
-          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
-
-          cat artifacts/SHA256SUMS
-          ls -lh artifacts
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.artifacts.outputs.image_name }}
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish GitHub release
-        if: ${{ inputs.create_release }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.artifacts.outputs.release_tag }}
-          name: ${{ steps.artifacts.outputs.image_name }}
-          body_path: artifacts/BUILD_INFO.txt
-          files: |
-            artifacts/OrangeFox-*-${{ inputs.device_codename }}.img
-            artifacts/OrangeFox-*-${{ inputs.device_codename }}.zip
-            artifacts/SHA256SUMS
-
-      - name: Upload build log on failure
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangefox-${{ inputs.device_codename }}-failed-${{ github.run_id }}
-          path: |
-            build.log
-            artifacts/BUILD_INFO.txt
-          if-no-files-found: warn
-          retention-days: 7
+    - name: 🎥 上传至发行版
+      uses: softprops/action-gh-release@v2
+      if: success()
+      with:
+        files: upload_artifacts/*
+        name: ${{ inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          <h1 align="center">
+            <img src="https://orangefox.download/fox.svg" height="40" style="vertical-align:bottom"/> 
+            OrangeFox ${{ inputs.MANIFEST_BRANCH }}
+          </h1>
+          🚀 构建: ${{ github.run_id }}<br>
+          📱 设备: ${{ inputs.DN }}<br>
+          🔢 设备代号: ${{ inputs.DEVICE_NAME }}<br>
+          🦊 OrangeFox版本: ${{ inputs.MANIFEST_BRANCH }}<br>
+          📅 构建日期: ${{ env.BUILD_DATE }}<br>
+          <br>
+          <strong>✅ 状态: 构建成功 (Build Successfully)</strong>

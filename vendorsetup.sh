@@ -32,7 +32,12 @@ if [ "$1" = "$FDEVICE" ] || [ "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
     export FOX_BUILD_TYPE=Alpha
 
     # Recent header-v4/GKI images need the current magiskboot implementation.
+    # This is a boot-image utility and does not enable the Magisk addon UI.
     export FOX_USE_UPDATED_MAGISKBOOT=1
+
+    # This port ships KernelSU-family installers instead of Magisk. Remove the
+    # Magisk install/uninstall entries and omit their ZIPs from FoxFiles.
+    export FOX_DELETE_MAGISK_ADDON=1
 
     # bixi is an ARM64 Virtual A/B device using a supported GKI 6.6 kernel.
     # Include the official OrangeFox root addons and their ksud userspace

@@ -117,7 +117,7 @@ jobs:
           echo "未传入 source_fix_script，跳过源码修复脚本"
         fi
         export ALLOW_MISSING_DEPENDENCIES=true
-        lunch twrp_${{ inputs.DEVICE_NAME }}-eng && mka ${{ inputs.BUILD_TARGET }}image
+        lunch twrp_${{ inputs.DEVICE_NAME }}-ap2a-eng && mka ${{ inputs.BUILD_TARGET }}image
 
     - name: 💿 整理镜像
       run: |

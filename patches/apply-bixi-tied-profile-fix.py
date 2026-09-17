@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Add unified clone/work-profile decryption support to TWRP's vold fork.
 
-Android stores a random credential for a profile with a unified challenge in
-gatekeeper.profile.key.  The credential is encrypted by a Keystore2 key bound
-to the parent user's SID.  TWRP traditionally tries the entered parent
-credential directly against the profile's synthetic-password protector, which
-can never work.  This source transformation refreshes the parent Gatekeeper
-auth token and unwraps the tied profile credential through Keystore2 first.
+Android 16 and older store the encrypted random profile credential in
+gatekeeper.profile.key and use a per-user Keystore alias.  Android 17 stores it
+beside the profile's synthetic-password protector as <protector>.profile_pwd
+and includes the protector id in the alias.  Both keys are bound to the parent
+user's SID.  TWRP cannot verify the entered parent credential directly against
+the profile's protector; it must refresh the parent Gatekeeper authorization,
+unwrap the random profile credential through Keystore2, then use that random
+credential to unlock the profile synthetic password.
 """
 
 from pathlib import Path
@@ -24,10 +26,11 @@ text = path.read_text()
 legacy_markers = (
     "bixi: decrypt Android unified tied-profile credentials.",
     "bixi: decrypt Android unified tied-profile credentials (v2).",
+    "bixi: decrypt Android unified tied-profile credentials (v3).",
 )
-marker = "bixi: decrypt Android unified tied-profile credentials (v3)."
+marker = "bixi: decrypt Android unified tied-profile credentials (v4)."
 if marker in text:
-    print("bixi tied-profile decryption fix v3 is already applied.")
+    print("bixi tied-profile decryption fix v4 is already applied.")
     raise SystemExit(0)
 applied_marker = next((candidate for candidate in legacy_markers if candidate in text), None)
 
@@ -51,7 +54,7 @@ if "#include <openssl/hmac.h>\n" not in text:
 
 unwrap_anchor = "\tstd::string unwrapSyntheticPasswordBlob(const std::string& spblob_path, const std::string& handle_str, const userid_t user_id,\n"
 helpers = r'''
-	// bixi: decrypt Android unified tied-profile credentials (v3).
+	// bixi: decrypt Android unified tied-profile credentials (v4).
 	// A tied profile's random credential is protected by a Keystore2 AES-GCM key
 	// that is authorized by the parent user's Gatekeeper SID.  Refresh that
 	// authorization after unwrapping the parent's synthetic password.
@@ -194,16 +197,8 @@ if applied_marker is not None:
     if helper_start < 0 or helper_end < 0:
         raise SystemExit("Unable to locate the existing tied-profile helper for upgrade")
     text = text[:helper_start] + helpers + text[helper_end:]
-    old_call = 'keyDescriptor("profile_key_name_decrypt_" + std::to_string(profile_user_id))'
-    new_call = '::android::keystore::keyDescriptor("profile_key_name_decrypt_" + std::to_string(profile_user_id))'
-    if new_call not in text:
-        if old_call not in text:
-            raise SystemExit("Unable to upgrade the existing tied-profile key lookup")
-        text = text.replace(old_call, new_call, 1)
-    path.write_text(text)
-    print("Upgraded bixi tied-profile decryption support to v3 with AIDL Gatekeeper.")
-    raise SystemExit(0)
-text = text.replace(unwrap_anchor, helpers + unwrap_anchor, 1)
+else:
+    text = text.replace(unwrap_anchor, helpers + unwrap_anchor, 1)
 
 derive_anchor = "\t\t\tif (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3) {\n\t\t\t\t// V3 uses SP800 instead of SHA512\n"
 derive_replacement = (
@@ -214,19 +209,71 @@ derive_replacement = (
     "\t\t\tif (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3) {\n"
     "\t\t\t\t// V3 uses SP800 instead of SHA512\n"
 )
-if derive_anchor not in text:
-    raise SystemExit("Unable to find the FBE-key derivation block in system/vold/Decrypt.cpp")
-text = text.replace(derive_anchor, derive_replacement, 1)
+if "Warning: could not authorize tied profiles" not in text:
+    if derive_anchor not in text:
+        raise SystemExit("Unable to find the FBE-key derivation block in system/vold/Decrypt.cpp")
+    text = text.replace(derive_anchor, derive_replacement, 1)
 
 password_type_anchor = 'extern "C" int Get_Password_Type(const userid_t user_id, std::string& filename) {\n'
 tied_profile_helpers = r'''
-	bool GetTiedProfileCredential(const userid_t profile_user_id, std::string* credential) {
-		const std::string profile_lock_path = "/data/system/users/" +
+	bool LoadTiedProfileCredentialRecord(const userid_t profile_user_id,
+			const std::string& protector_id, std::string* stored_data,
+			std::string* key_alias) {
+		if (!protector_id.empty()) {
+			std::string normalized_id = protector_id;
+			if (normalized_id.size() > 16) {
+				printf("Invalid profile protector id '%s' for user %d\n",
+						normalized_id.c_str(), profile_user_id);
+				return false;
+			}
+			while (normalized_id.size() < 16)
+				normalized_id.insert(0, "0");
+			for (char& c : normalized_id) {
+				if (c >= 'A' && c <= 'F')
+					c = c - 'A' + 'a';
+				else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) {
+					printf("Invalid profile protector id '%s' for user %d\n",
+							normalized_id.c_str(), profile_user_id);
+					return false;
+				}
+			}
+			const std::string spblob_path = "/data/system_de/" +
+					std::to_string(profile_user_id) + "/spblob/";
+			if (Get_Spblob_Data(spblob_path, normalized_id, ".profile_pwd",
+					"profile password", stored_data)) {
+				*key_alias = "profile_key_name_decrypt_" +
+						std::to_string(profile_user_id) + "." + normalized_id;
+				printf("Using Android 17 profile_pwd protector %s for user %d\n",
+						normalized_id.c_str(), profile_user_id);
+				return true;
+			}
+		}
+
+		const std::string legacy_path = "/data/system/users/" +
 				std::to_string(profile_user_id) + "/gatekeeper.profile.key";
+		if (!android::base::ReadFileToString(legacy_path, stored_data))
+			return false;
+		*key_alias = "profile_key_name_decrypt_" + std::to_string(profile_user_id);
+		printf("Using legacy gatekeeper.profile.key for user %d\n", profile_user_id);
+		return true;
+	}
+
+	bool HasTiedProfileCredential(const userid_t profile_user_id,
+			const std::string& protector_id) {
 		std::string stored_data;
-		if (!android::base::ReadFileToString(profile_lock_path, &stored_data) ||
-				stored_data.size() <= 12 + 16) {
-			printf("Invalid tied-profile lock file for user %d\n", profile_user_id);
+		std::string key_alias;
+		return LoadTiedProfileCredentialRecord(profile_user_id, protector_id,
+				&stored_data, &key_alias);
+	}
+
+	bool GetTiedProfileCredential(const userid_t profile_user_id,
+			const std::string& protector_id, std::string* credential) {
+		std::string stored_data;
+		std::string key_alias;
+		if (!LoadTiedProfileCredentialRecord(profile_user_id, protector_id,
+				&stored_data, &key_alias) || stored_data.size() <= 12 + 16) {
+			printf("Invalid or missing tied-profile credential for user %d\n",
+					profile_user_id);
 			return false;
 		}
 
@@ -252,10 +299,11 @@ tied_profile_helpers = r'''
 		}
 		ks2::KeyEntryResponse key_entry;
 		auto status = keystore->getKeyEntry(
-				::android::keystore::keyDescriptor("profile_key_name_decrypt_" + std::to_string(profile_user_id)),
+				::android::keystore::keyDescriptor(key_alias),
 				&key_entry);
 		if (!status.isOk()) {
-			printf("Failed to get tied-profile key: %s\n", status.getDescription().c_str());
+			printf("Failed to get tied-profile key '%s': %s\n", key_alias.c_str(),
+					status.getDescription().c_str());
 			return false;
 		}
 		ks2::CreateOperationResponse operation;
@@ -276,15 +324,18 @@ tied_profile_helpers = r'''
 		return !credential->empty();
 	}
 
-	bool DecryptTiedProfile(const userid_t profile_user_id, const std::string& parent_password) {
+	bool DecryptTiedProfile(const userid_t profile_user_id,
+			const std::string& protector_id, const std::string& parent_password) {
 		std::string profile_credential;
-		if (!GetTiedProfileCredential(profile_user_id, &profile_credential) &&
+		if (!GetTiedProfileCredential(profile_user_id, protector_id,
+				&profile_credential) &&
 				parent_password != "!") {
 			printf("Refreshing parent user 0 authentication for tied profile %d\n",
 					profile_user_id);
 			// This also publishes the parent's fresh HardwareAuthToken to Keystore2.
 			(void)Decrypt_User_Synth_Pass(0, parent_password);
-			if (!GetTiedProfileCredential(profile_user_id, &profile_credential))
+			if (!GetTiedProfileCredential(profile_user_id, protector_id,
+					&profile_credential))
 				return false;
 		}
 		if (profile_credential.empty())
@@ -295,10 +346,34 @@ tied_profile_helpers = r'''
 '''
 if password_type_anchor not in text:
     raise SystemExit("Unable to find Get_Password_Type() in system/vold/Decrypt.cpp")
-text = text.replace(password_type_anchor, tied_profile_helpers + password_type_anchor, 1)
+existing_tied_helper = text.find("\tbool GetTiedProfileCredential(")
+if existing_tied_helper >= 0:
+    existing_tied_helper_end = text.find(password_type_anchor, existing_tied_helper)
+    if existing_tied_helper_end < 0:
+        raise SystemExit("Unable to locate the end of the old tied-profile helpers")
+    text = (
+        text[:existing_tied_helper]
+        + tied_profile_helpers
+        + text[existing_tied_helper_end:]
+    )
+else:
+    text = text.replace(password_type_anchor, tied_profile_helpers + password_type_anchor, 1)
 
 user_anchor = "    std::string filename;\n    bool Default_Password = (Password == \"!\");\n"
 user_replacement = (
+    "\tif (user_id != 0) {\n"
+	"\t\tKeystoreInfo profile_keystore_info;\n"
+	"\t\tconst std::string profile_protector_id =\n"
+	"\t\t\t\tprofile_keystore_info.getHandle(user_id);\n"
+	"\t\tif (HasTiedProfileCredential(user_id, profile_protector_id)) {\n"
+	"\t\t\tprintf(\"Using unified tied-profile credential path for user %d\\n\", user_id);\n"
+	"\t\t\treturn DecryptTiedProfile(user_id, profile_protector_id, Password);\n"
+	"\t\t}\n"
+	"\t}\n"
+    "    std::string filename;\n"
+    "    bool Default_Password = (Password == \"!\");\n"
+)
+legacy_user_replacement = (
     "\tif (user_id != 0) {\n"
     "\t\tconst std::string tied_profile_lock = \"/data/system/users/\" +\n"
     "\t\t\t\tstd::to_string(user_id) + \"/gatekeeper.profile.key\";\n"
@@ -310,9 +385,12 @@ user_replacement = (
     "    std::string filename;\n"
     "    bool Default_Password = (Password == \"!\");\n"
 )
-if user_anchor not in text:
+if legacy_user_replacement in text:
+    text = text.replace(legacy_user_replacement, user_replacement, 1)
+elif user_anchor in text:
+    text = text.replace(user_anchor, user_replacement, 1)
+else:
     raise SystemExit("Unable to find the Decrypt_User() credential setup block")
-text = text.replace(user_anchor, user_replacement, 1)
 
 path.write_text(text)
-print("Added bixi Android unified tied-profile decryption support to system/vold/Decrypt.cpp.")
+print("Added Android 17 and legacy unified tied-profile decryption support to system/vold/Decrypt.cpp.")

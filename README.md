@@ -29,6 +29,12 @@ mka adbd recoveryimage
 The build produces an OrangeFox image under `out/target/product/bixi/` (normally
 named `OrangeFox-*-bixi.img`) and may also produce an installer ZIP. 
 
+The source-fix helper also adds unified clone/work-profile decryption for both
+the legacy `gatekeeper.profile.key` layout and Android 17's per-protector
+`<handle>.profile_pwd` layout.  Android 17 Keystore aliases include the profile
+user and protector id, for example
+`profile_key_name_decrypt_999.77674edbac5d8a0e`.
+
 Local KernelSU modules are overlaid by the source-fix helper. Standard,
 KernelSU Next and SukiSU Ultra modules belong in `prebuilt/kernelsu`,
 `prebuilt/kernelsu/next` and `prebuilt/kernelsu/suki`, respectively. For

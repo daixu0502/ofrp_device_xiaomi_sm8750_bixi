@@ -162,7 +162,7 @@ jobs:
       with:
         files: upload_artifacts/*
         name: ${{ inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
-        tag_name: ${{ github.run_id }}
+        tag_name: ${{ env.BUILD_DATE }}-${{ github.run_id }}
         body: |
           <h1 align="center">
             <img src="https://orangefox.download/fox.svg" height="40" style="vertical-align:bottom"/> 

@@ -1,0 +1,21 @@
+# Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+
+service vendor.boot-qti /system/bin/hw/android.hardware.boot-service.qti.recovery
+    class early_hal
+    # init.recovery.qcom.rc starts this explicitly after creating the stock
+    # /dev/block/bootdevice compatibility link.
+    disabled
+    user root
+    group root
+    # Stock hal_bootctl_default policy is not present in the minimal TWRP
+    # ramdisk and denies access to the generic block_device-labelled misc node.
+    # The recovery domain already owns partition management in this environment.
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.boot.IBootControl/default
+    # This service comes from the stock SDK 35 userspace. fox_14.1 otherwise
+    # resolves it against Android 14's libc++, which lacks
+    # std::__1::__libcpp_verbose_abort and makes the service crash before it can
+    # register IBootControl. Load the matching stock-ABI compatibility shims.
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/system/lib64:/sbin
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so

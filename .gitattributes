@@ -1,0 +1,18 @@
+# Android build inputs and recovery scripts must keep Unix line endings.
+*.bp text eol=lf
+*.mk text eol=lf
+*.prop text eol=lf
+*.rc text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.fstab text eol=lf
+wlan_start text eol=lf
+recovery.fstab text eol=lf
+
+# Prebuilt recovery payloads are binary.
+*.bin -text
+*.img -text
+*.ko -text
+*.so -text
+busybox -text
+kernel -text

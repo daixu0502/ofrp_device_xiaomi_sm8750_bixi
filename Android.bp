@@ -1,0 +1,31 @@
+soong_namespace {
+}
+
+cc_binary {
+    name: "bixi-cover-display-cleanup",
+    recovery: true,
+    srcs: ["display/bixi_cover_display_cleanup.c"],
+    c_std: "gnu11",
+    static_libs: ["libdrm"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}
+
+// Xiaomi's vibration HAL keeps /data/local/log/hapticDump.bin open for its
+// entire lifetime. Redirect that recovery-only debug stream to tmpfs so TWRP
+// can unmount /data without stopping haptics.
+cc_library_shared {
+    name: "libbixi_haptic_log_redirect",
+    recovery: true,
+    srcs: ["haptics/haptic_log_redirect.c"],
+    compile_multilib: "64",
+    shared_libs: ["libdl"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}

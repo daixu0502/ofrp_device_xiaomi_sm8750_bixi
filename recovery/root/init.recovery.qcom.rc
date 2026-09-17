@@ -1,0 +1,170 @@
+on early-init
+    # vendor_dlkm is not mapped during first bring-up. Load the matching stock
+    # touch stack from the recovery ramdisk in dependency order.
+    insmod /vendor/lib/modules/xiaomi_touch.ko
+    insmod /vendor/lib/modules/synaptics_tcm2.ko
+
+on init
+    # Match the stock recovery's UFS compatibility link and initial panel level.
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+    write /sys/class/backlight/panel0-backlight/brightness 200
+    write /sys/class/backlight/panel1-backlight/brightness 0
+    setprop sys.usb.configfs 1
+    setprop sys.usb.config adb
+    setprop prepdecrypt.setpatch true
+    start vendor.boot-qti
+    # TWRP's battery monitor requests the HIDL 2.0 interface. The 2.1 service
+    # also registers that inherited interface and prevents a one-second lazy
+    # service lookup loop in the Recovery process.
+    start health-hal-2-1
+    # OrangeFox also probes the stable AIDL Health interface. Start the
+    # recovery-specific QTI service from the stock bixi recovery so that the
+    # probe does not wake servicemanager once per second forever.
+    start vendor.health-recovery
+on early-fs
+    # Follow the SM8750 thales recovery setup: let WALT recognize recovery and
+    # ROM installation workers so they can use the full CPU topology on demand.
+    write /proc/sys/walt/sched_lib_name "recovery,magiskboot,Updater,updater,update_engine_sideload"
+    write /proc/sys/walt/sched_lib_mask_force 255
+
+on fs
+    # Qualcomm's secure listeners require the slot modem trustlets and UFS SSD
+    # before the Android 15 HALs can talk to QTEE.
+    write /proc/sys/kernel/firmware_config/force_sysfs_fallback 1
+    chmod 0660 /dev/smcinvoke
+    chown system drmrpc /dev/smcinvoke
+    chmod 0660 /dev/qsee_ipc_irq_spss
+    chown system drmrpc /dev/qsee_ipc_irq_spss
+    chmod 0664 /dev/ion
+    chown system system /dev/ion
+    wait /dev/block/bootdevice/by-name/ssd 10
+    wait /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} 10
+    mkdir /vendor/firmware_mnt 0755 root shell
+    # Android init expects mount flags and the filesystem option list as
+    # separate arguments. TWRP's mount_all --early skips this charger fstab
+    # entry because it is not tagged first_stage_mount.
+    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /vendor/firmware_mnt ro shortname=lower,uid=1000,gid=1000,dmask=227,fmask=337
+    mount none /vendor/firmware_mnt /firmware bind
+    # qcom_q6v5_pas probes before modem firmware is mounted and its first ADSP
+    # autostart therefore fails with ENOENT. Retry asynchronously now that
+    # ueventd can serve adsp.mdt and its segments from /firmware/image.
+    start bixi-recovery-adsp
+    mkdir /mnt/vendor 0775 shell system
+    # Keep the vendor alias isolated. TWRP manages the real persist partition
+    # at /persist; mounting it here as well would break unmount/wipe semantics.
+    mkdir /mnt/vendor/persist 0775 shell system
+    mkdir /tmp/persist 0775 shell system
+    mount none /tmp/persist /mnt/vendor/persist bind rec
+    install_keyring
+    start vendor.qseecomd
+
+on property:vendor.sys.listeners.registered=true
+    start vendor.gatekeeper_default
+
+# TWRP publishes this after recovery.fstab has created the logical mapper
+# devices and attempted module loading; the coordinator verifies /dev/nq-nci.
+on property:twrp.modules.loaded=true
+    start bixi.crypto-init
+    # This is the reliable post-fstab point in fox_14.1. The legacy
+    # postrecoveryboot.sh hook is not invoked by this branch.
+    umount /odm
+    setprop vendor.haptic.calibrate.done 1
+    start odm.vibratorfeature-service
+
+on boot
+    # The stock recovery kernel command line initially selects performance.
+    # Do not wait indefinitely for particular cpufreq policy numbers. Their
+    # layout depends on the booted GKI/vendor modules, and an absent policy
+    # blocks init before the recovery service can reach the main UI.
+    # Clear the bootloader's secondary-panel continuous splash before recovery
+    # opens card0. This completes normally on bixi and releases DRM master.
+    wait /dev/dri/card0 5
+    exec_start bixi-cover-display-cleanup
+    start odm.post_boot
+    start bixi-recovery-charge
+    write /sys/class/backlight/panel1-backlight/brightness 0
+    setprop sys.usb.config adb
+
+# Re-apply the default charging state after USB gadget enumeration as well.
+# This covers a cable connected after Recovery has already booted.
+on property:sys.usb.state=adb
+    start bixi-recovery-charge
+
+# Re-apply the normal charging switches once charger_pd is available. Before
+# this point the USB power_supply exists but qcom_subpmic cannot query it.
+on property:twrp.adsp.ready=true
+    start bixi-recovery-charge
+
+# Keep the post-boot service in this device RC. Android 14 recovery does not
+# scan /system/odm/etc/init on this ramdisk layout, so placing the stock service
+# definition there leaves both CPU policies in the bootloader's performance
+# governor and prevents vendor.post_boot.parsed from ever being published.
+service odm.post_boot /system/bin/sh /system/bin/bixi-recovery-power.sh
+    class core
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+# Stock recovery AIDL Health service. The private SDK 35 compatibility
+# libraries satisfy the newer prebuilt without replacing OrangeFox's own
+# process-wide Android 14 libraries.
+service vendor.health-recovery /system/bin/hw/android.hardware.health-service.qti_recovery
+    class hal
+    user root
+    group root system
+    capabilities WAKE_ALARM BLOCK_SUSPEND
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+    setenv LD_LIBRARY_PATH /system/lib64/health:/system/lib64:/vendor/lib64
+    setenv LD_PRELOAD /system/lib64/libbinder_ndk-sdk35.so:/system/lib64/libbase-sdk35.so:/vendor/lib64/libcxx-bixi-sdk35.so
+
+# Xiaomi's charge-interface nodes are write-oriented and are normally managed
+# by Android userspace. Recovery only restores their safe enabled defaults;
+# mi_thermald remains responsible for dynamic thermal current limits.
+service bixi-recovery-charge /system/bin/sh /system/bin/bixi-recovery-charge.sh
+    class core
+    user root
+    group root system
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+service bixi-recovery-adsp /system/bin/sh /system/bin/bixi-recovery-adsp.sh
+    class core
+    user root
+    group root system
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
+# The stock sun post-boot script publishes this property after restoring WALT,
+# core control and hardware minimum frequencies. Start Xiaomi's matching
+# thermal daemon afterwards so its bixi sensor tables dynamically control the
+# CPU frequency ceiling instead of applying a recovery-only fixed cap.
+on property:vendor.post_boot.parsed=1
+    mkdir /tmp/recovery/thermal 0770 root system
+    setprop vendor.sys.thermal.data.path /tmp/recovery/thermal
+    start mi_thermald
+
+service mi_thermald /vendor/bin/mi_thermald
+    class main
+    user root
+    group system
+    disabled
+    seclabel u:r:recovery:s0
+    # Keep the daemon's BoringSSL pair private because it decrypts Xiaomi's
+    # binary thermal maps and the Android 14 recovery copies are not ABI-stable.
+    setenv LD_LIBRARY_PATH /vendor/lib64/thermal:/vendor/lib64:/system/lib64:/sbin
+    # The stock Android 15 daemon also requires its matching libc++ ABI.
+    setenv LD_PRELOAD /vendor/lib64/libcxx-bixi-sdk35.so
+
+service bixi-cover-display-cleanup /system/bin/bixi-cover-display-cleanup
+    user root
+    group root graphics
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0

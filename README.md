@@ -1,22 +1,17 @@
 # Xiaomi MIX Flip 2 (`bixi`) OrangeFox `fox_14.1` device tree
 
-This tree is derived from the unpacked HyperOS
-`OS3.0.304.0.WOHCNXM` Android 16 images and is configured for the official
-OrangeFox `fox_14.1` source branch.
-
-
 ## Confirmed stock layout
 
 | Item | Stock value |
 | --- | --- |
 | Device | Xiaomi MIX Flip 2 / `bixi` / `2505APX7BC` |
 | SoC | Qualcomm SM8750 family, DT compatible `qcom,sun` / `qcom,sunp` |
-| Kernel | GKI 6.6.77, arm64 only |
+| Kernel | GKI 6.6.77/6.6.118, arm64 only |
 | Boot format | Header v4, 4096-byte pages, LZ4 ramdisk |
 | Recovery | Dedicated A/B partition, 104857600 bytes, no embedded kernel |
 | Display | 1224x2912 inner panel, `panel0-backlight` |
 | Storage | UFS, dynamic logical partitions, EROFS/ext4, F2FS userdata |
-| Android | 16 / API 36 (TWRP 35) |
+| Android | 16/17 / API 36 (TWRP 35) |
 
 
 ## Build with OrangeFox 14.1

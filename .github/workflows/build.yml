@@ -1,0 +1,177 @@
+name: OrangeFox - 构建
+
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'OrangeFox 版本'
+        required: true
+        default: '14.1'
+        type: choice
+        options:
+        - 14.1
+        - 12.1
+        - 11.0
+        - 10.0
+      DEVICE_TREE:
+        description: 'OrangeFox设备树'
+        required: true
+        default: 'https://github.com/daixu0502/ofrp_device_xiaomi_sm8750_bixi'
+      DEVICE_TREE_BRANCH:
+        description: 'OrangeFox设备树分支'
+        required: true
+        default: 'ofrp-14.1'
+      DEVICE_PATH:
+        description: '指定设备路径'
+        required: true
+        default: 'device/xiaomi/bixi'
+      DEVICE_NAME:
+        description: '指定设备代号'
+        required: true
+        default: 'bixi'
+      BUILD_TARGET:
+        description: '构建目标'
+        required: true
+        default: 'recovery'
+        type: choice
+        options:
+        - recovery
+        - boot
+      source_fix_script:
+        description: '源码修复脚本（留空则不运行）'
+        required: false
+        default: 'patches/apply-orangefox14-source-fixes.sh'
+        type: string
+      DN:
+        description: '设备名称'
+        required: true
+        default: '小米MIX Flip 2'
+        type: string
+
+jobs:
+  build:
+    name: 🏠 由 ${{ github.actor }} 构建REC
+    runs-on: ubuntu-22.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
+    steps:
+    - name: 🧱 构建配置
+      run: |
+        echo "构建配置"
+        echo "设备代号: ${{ inputs.DEVICE_NAME }}"
+        echo "设备名称: ${{ inputs.DN }}"
+        echo "OrangeFox版本: ${{ inputs.MANIFEST_BRANCH }}"
+        echo "指定设备路径: ${{ inputs.DEVICE_PATH }}"
+        echo "构建: ${{ inputs.BUILD_TARGET }}"
+    - name: ✅ 检查
+      uses: actions/checkout@v4
+              
+    - name: 🧹 清理
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: 🚢 Swap空间
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 24
+      
+    - name: 🤖 构建环境
+      run: |
+        sudo apt install aria2 -y
+        git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+        cd scripts
+        sudo bash setup/android_build_env.sh
+      
+    - name: 🏙️ 初始化清单
+      if: inputs.MANIFEST_BRANCH == '11.0' || inputs.MANIFEST_BRANCH == '12.1' || inputs.MANIFEST_BRANCH == '14.1'
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
+        cd ${GITHUB_WORKSPACE}/OrangeFox
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+        git clone https://gitlab.com/OrangeFox/sync.git -b master
+        cd sync
+        ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+
+    - name: 🌳 克隆设备树
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        git clone ${{ inputs.DEVICE_TREE }} -b ${{ inputs.DEVICE_TREE_BRANCH }} ./${{ inputs.DEVICE_PATH }}
+        cd ${{ inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+    - name: 🦊 构建OrangeFox
+      env:
+        DEVICE_PATH: ${{ inputs.DEVICE_PATH }}
+        SOURCE_FIX_SCRIPT: ${{ inputs.source_fix_script }}
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        set +e
+        source build/envsetup.sh
+        set -e
+        if [ -n "$SOURCE_FIX_SCRIPT" ]; then
+          bash "$DEVICE_PATH/$SOURCE_FIX_SCRIPT" "$PWD"
+        else
+          echo "未传入 source_fix_script，跳过源码修复脚本"
+        fi
+        export ALLOW_MISSING_DEPENDENCIES=true
+        lunch twrp_${{ inputs.DEVICE_NAME }}-ap2a-eng && mka ${{ inputs.BUILD_TARGET }}image
+
+    - name: 💿 整理镜像
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/upload_artifacts
+
+        FOX_DIR="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}"
+        OUT_DIR="${FOX_DIR}/out/target/product/${{ inputs.DEVICE_NAME }}"
+
+        echo "🔍 正在从以下绝对路径搜寻文件："
+        echo "$OUT_DIR"
+
+        if [ ! -d "$OUT_DIR" ]; then
+            echo "❌ 严重错误：输出目录不存在！"
+            echo "可能是 inputs.DEVICE_NAME (${{ inputs.DEVICE_NAME }}) 不对，或者 Manifest 分支不对。"
+            exit 1
+        fi
+
+        find "$OUT_DIR" -maxdepth 1 -name "OrangeFox*.img" -exec cp {} ${GITHUB_WORKSPACE}/upload_artifacts/ \;
+        find "$OUT_DIR" -maxdepth 1 -name "OrangeFox*.zip" -exec cp {} ${GITHUB_WORKSPACE}/upload_artifacts/ \;
+
+        if [ -z "$(ls -A ${GITHUB_WORKSPACE}/upload_artifacts/)" ]; then
+           echo "❌ 未寻找到镜像，请检查BoardConfig.mk或设备树配置"
+           exit 1
+        else
+           echo "✅ 找到文件"
+           ls -R ${GITHUB_WORKSPACE}/upload_artifacts/
+        fi
+
+    - name: 🧶 设置发行版参数
+      run: |
+        echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> $GITHUB_ENV
+        
+        DEVICE_TREE_URL="${{ inputs.DEVICE_TREE }}"
+        if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
+          DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
+        fi
+        echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> $GITHUB_ENV
+
+    - name: 🎥 上传至发行版
+      uses: softprops/action-gh-release@v2
+      if: success()
+      with:
+        files: upload_artifacts/*
+        name: ${{ inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ env.BUILD_DATE }}-${{ github.run_id }}
+        body: |
+          <h1 align="center">
+            <img src="https://orangefox.download/fox.svg" height="40" style="vertical-align:bottom"/> 
+            OrangeFox ${{ inputs.MANIFEST_BRANCH }}
+          </h1>
+          🚀 构建: ${{ github.run_id }}<br>
+          📱 设备: ${{ inputs.DN }}<br>
+          🔢 设备代号: ${{ inputs.DEVICE_NAME }}<br>
+          🦊 OrangeFox版本: ${{ inputs.MANIFEST_BRANCH }}<br>
+          📅 构建日期: ${{ env.BUILD_DATE }}<br>
+          <br>
+          <strong>✅ 状态: 构建成功 (Build Successfully)</strong>

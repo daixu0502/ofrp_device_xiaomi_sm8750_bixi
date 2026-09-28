@@ -14,9 +14,9 @@ cc_binary {
     ],
 }
 
-// Xiaomi's vibration HAL keeps /data/local/log/hapticDump.bin open for its
-// entire lifetime. Redirect that recovery-only debug stream to tmpfs so TWRP
-// can unmount /data without stopping haptics.
+// Keep the stock vibrator HAL's persistent debug stream on tmpfs and load its
+// haptics library from the recovery ramdisk, so neither /data nor /odm is
+// pinned by the running service.
 cc_library_shared {
     name: "libbixi_haptic_log_redirect",
     recovery: true,

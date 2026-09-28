@@ -11,9 +11,9 @@ on late-fs
     mkdir /mnt/vendor/persist/haptics 0755 root root
 
 # Keep the recovery HAL executable in the ramdisk system tree. The stock HAL
-# dlopens /odm/lib64/libaachaptics.so by an absolute path, so its ramdisk copy
-# remains there and the service starts when twrp.modules.loaded confirms that
-# TWRP has finished with its temporary logical ODM mount.
+# dlopens /odm/lib64/libaachaptics.so by an absolute path. The recovery
+# preload shim redirects this to the ramdisk copy at /system/odm/lib64 so the
+# running service does not keep the real ODM partition mounted.
 service odm.vibratorfeature-service /system/bin/hw/vendor.xiaomi.hardware.vibratorfeature.service
     class hal
     disabled
@@ -21,7 +21,7 @@ service odm.vibratorfeature-service /system/bin/hw/vendor.xiaomi.hardware.vibrat
     group root input audio
     seclabel u:r:recovery:s0
     interface aidl android.hardware.vibrator.IVibrator/vibratorfeature
-    setenv LD_LIBRARY_PATH /system/lib64:/vendor/lib64:/vendor/lib64/hw:/odm/lib64:/sbin
+    setenv LD_LIBRARY_PATH /system/lib64:/system/odm/lib64:/vendor/lib64:/vendor/lib64/hw:/odm/lib64:/sbin
     # Stock Android 15 HALs otherwise bind to recovery's incompatible Android
     # 14 libbinder_ndk/libbase/libc++ and fail before registering the service.
     # Keep the HAL's permanent hapticDump handle on recovery tmpfs, not /data.
